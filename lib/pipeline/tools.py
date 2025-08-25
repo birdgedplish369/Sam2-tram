@@ -24,19 +24,148 @@ else:
             pass
 
 
-def video2frames(vidfile, save_folder):
-    """ Convert input video to images """
+def video2frames(vidfile, save_folder, max_fps=30):
+    """ Convert input video to images with 720p compression, handling portrait videos and rotations 
+    Args:
+        vidfile: 输入视频文件路径
+        save_folder: 保存帧的文件夹路径  
+        max_fps: 最大fps限制，默认30
+    """
     count = 0
     cap = cv2.VideoCapture(vidfile)
+    
+    if not cap.isOpened():
+        print(f"Error: Cannot open video file {vidfile}")
+        return 0, 0
+    
+    # 获取视频信息
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    # 检查fps是否有效
+    if fps <= 0 or fps > 1000:  # 处理异常fps值
+        fps = 30.0  # 使用默认fps
+        print(f"Warning: Invalid FPS detected, using default 30.0 fps")
+    
+    print(f"Original video: {original_width}x{original_height} @ {fps:.2f} fps")
+    
+    # 计算实际输出fps和抽帧间隔
+    if fps > max_fps:
+        output_fps = max_fps
+        frame_interval = fps / max_fps
+        print(f"FPS limited from {fps:.2f} to {max_fps}, frame interval: {frame_interval:.2f}")
+    else:
+        output_fps = fps
+        frame_interval = 1.0
+        print(f"FPS within limit, using original {fps:.2f} fps")
+    
+    # 检测视频方向和旋转信息
+    rotation = 0
+    try:
+        # 尝试检测视频旋转信息（OpenCV 4.5+支持）
+        if hasattr(cv2, 'CAP_PROP_ORIENTATION_META'):
+            rotation = int(cap.get(cv2.CAP_PROP_ORIENTATION_META))
+    except:
+        pass
+    
+    # 根据旋转信息调整宽高
+    if rotation in [90, 270]:
+        # 90度或270度旋转，交换宽高
+        display_width, display_height = original_height, original_width
+        is_rotated = True
+    else:
+        display_width, display_height = original_width, original_height
+        is_rotated = False
+    
+    if rotation != 0:
+        print(f"Video rotation detected: {rotation} degrees")
+        print(f"Display dimensions: {display_width}x{display_height}")
+    
+    # 判断视频方向
+    is_portrait = display_height > display_width
+    if is_portrait:
+        print("Portrait video detected")
+    
+    # 计算压缩尺寸 - 对于竖屏和横屏都统一处理
+    target_size = 720
+    max_dimension = max(display_width, display_height)
+    
+    if max_dimension > target_size:
+        # 按长边压缩，保持宽高比
+        scale_factor = target_size / max_dimension
+        new_width = int(display_width * scale_factor)
+        new_height = int(display_height * scale_factor)
+        
+        # 确保宽高都是偶数（视频编码要求）
+        if new_width % 2 != 0:
+            new_width += 1
+        if new_height % 2 != 0:
+            new_height += 1
+            
+        print(f"Compressing to: {new_width}x{new_height} (scale: {scale_factor:.3f})")
+        should_resize = True
+    else:
+        new_width, new_height = display_width, display_height
+        should_resize = False
+        print("Video resolution is already within 720p limit, no compression needed")
+    
+    # 处理每一帧
+    failed_frames = 0
+    frame_counter = 0  # 用于计算抽帧间隔
+    next_frame_to_save = 0.0  # 下一个要保存的帧位置
+    
     while(cap.isOpened()):
         ret, frame = cap.read()
-        if ret == True:
-            cv2.imwrite(f'{save_folder}/{count:04d}.jpg', frame)
-            count += 1
-        else:
+        if not ret:
             break
+        
+        # 检查是否需要保存当前帧（按fps限制抽帧）
+        if frame_counter >= next_frame_to_save:
+            try:
+                # 处理旋转
+                if is_rotated:
+                    if rotation == 90:
+                        frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+                    elif rotation == 270:
+                        frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+                    elif rotation == 180:
+                        frame = cv2.rotate(frame, cv2.ROTATE_180)
+                
+                # 如果需要压缩，调整帧大小
+                if should_resize:
+                    frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+                
+                # 保存帧
+                success = cv2.imwrite(f'{save_folder}/{count:04d}.jpg', frame)
+                if not success:
+                    failed_frames += 1
+                    print(f"Warning: Failed to save frame {count}")
+                
+                count += 1
+                next_frame_to_save += frame_interval
+                
+            except Exception as e:
+                failed_frames += 1
+                print(f"Error processing frame {count}: {e}")
+        
+        frame_counter += 1
+    
     cap.release()
-    return count
+    
+    # 输出处理结果
+    if should_resize:
+        print(f"Video compressed from {display_width}x{display_height} to {new_width}x{new_height}")
+    
+    if failed_frames > 0:
+        print(f"Warning: {failed_frames} frames failed to process")
+    
+    if count == 0:
+        print("Error: No frames were extracted from the video")
+        return 0, 0
+    
+    print(f"Successfully extracted {count} frames at {output_fps:.2f} fps")
+    return count, output_fps
 
 
 def detect_segment_track(imgfiles, out_path, thresh=0.5, min_size=None, 

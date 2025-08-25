@@ -1,6 +1,8 @@
 import sys
 sys.path.insert(0, 'thirdparty/DROID-SLAM/droid_slam')
 sys.path.insert(0, 'thirdparty/DROID-SLAM')
+# 添加ZoeDepth到Python路径，解决内部模块导入问题
+sys.path.insert(0, 'thirdparty/ZoeDepth')
 
 from tqdm import tqdm
 import numpy as np
@@ -9,15 +11,19 @@ import cv2
 from PIL import Image
 from glob import glob
 from torchvision.transforms import Resize
-
+import os
+import time
 from droid import Droid
 from .slam_utils import slam_args, parser
 from .slam_utils import get_dimention, est_calib, image_stream, preprocess_masks
 from .est_scale import est_scale_hybrid
 from ..utils.rotation_conversions import quaternion_to_matrix
-
+from thirdparty.ZoeDepth.zoedepth.models.builder import build_model_from_pretrained
+from thirdparty.ZoeDepth.zoedepth.utils.config import get_config
 torch.multiprocessing.set_start_method('spawn')
-
+from pathlib import Path
+# 修复导入：使用正确的ZoeDepth类导入
+from thirdparty.ZoeDepth.zoedepth.models.zoedepth.zoedepth_v1 import ZoeDepth
 
 def run_metric_slam(img_folder, masks=None, calib=None, is_static=False):
     '''
@@ -47,43 +53,98 @@ def run_metric_slam(img_folder, masks=None, calib=None, is_static=False):
     torch.cuda.empty_cache()
 
     ##### Estimate Metric Depth #####
-    repo = "isl-org/ZoeDepth"
-    model_zoe_n = torch.hub.load(repo, "ZoeD_N", pretrained=True)
-    _ = model_zoe_n.eval()
+
+    # 确保GPU内存清理，防止第二次运行冲突
+    torch.cuda.empty_cache()
+    
+    # 本地加载ZoeDepth模型
+    print("Loading ZoeDepth model...")
+    start_time = time.time()
+    ckpt_path = "/root/.cache/torch/hub/checkpoints/ZoeD_M12_N.pt"
+    config = get_config("zoedepth", "infer", pretrained_resource=ckpt_path)
+    model_zoe_n = build_model_from_pretrained(config, ckpt_path)
+    end_time = time.time()
+    print(f"ZoeDepth模型加载时间: {end_time - start_time:.2f}秒")
+    # _ = model_zoe_n.eval()
     model_zoe_n = model_zoe_n.to('cuda')
+    print("✅ ZoeDepth模型加载成功")
+    # # 检查torch.hub缓存中是否有MiDaS模型
+    # hub_dir = torch.hub.get_dir()
+    # midas_cache_path = os.path.join(hub_dir, "intel-isl_MiDaS_master")
+    
+    # if not os.path.exists(midas_cache_path):
+    #     print(f"⚠️ MiDaS模型架构缓存不存在: {midas_cache_path}")
+    #     print("请先运行以下命令预下载MiDaS架构:")
+    #     print("python -c \"import torch; torch.hub.load('intel-isl/MiDaS', 'DPT_BEiT_L_384', pretrained=False)\"")
+    #     # 返回默认值，避免程序崩溃
+    #     pred_cam_t = torch.zeros([len(imgfiles), 3])
+    #     pred_cam_r = torch.eye(3).expand(len(imgfiles), 3, 3)
+    #     return pred_cam_r, pred_cam_t
+    # else:
+    #     print(f"✅ 找到MiDaS架构缓存: {midas_cache_path}")
+    
+    # # 使用本地预训练的MiDaS模型，避免网络下载  
+    # conf = get_config("zoedepth", "infer", 
+    #                  use_pretrained_midas=False,  # ✅ 关键修复：不加载MiDaS权重
+    #                  force_reload=False)          # 避免重新下载
+    # print("配置信息:", {k: v for k, v in conf.items() if 'midas' in k.lower() or 'pretrained' in k.lower()})
+    # print("🔧 权重加载策略: ZoeD_M12_N.pt提供完整权重，不单独加载MiDaS")
+    
+    # model_zoe_n = build_model_from_pretrained(conf, "/root/.cache/torch/hub/checkpoints/ZoeD_M12_N.pt")
+    # # model_zoe_n.to('cuda').eval()
+    # print("✅ ZoeDepth模型加载成功")
 
     pred_depths = []
     H, W = get_dimention(img_folder)
-    for t in tqdm(tstamp):
-        img = cv2.imread(imgfiles[t])[:,:,::-1]
-        img = cv2.resize(img, (W, H))
-        
-        img_pil = Image.fromarray(img)
-        pred_depth = model_zoe_n.infer_pil(img_pil)
-        pred_depths.append(pred_depth)
-
-    ##### Estimate Metric Scale #####
-    scales_ = []
-    n = len(tstamp)   # for each keyframe
-    for i in tqdm(range(n)):
-        t = tstamp[i]
-        disp = disps[i]
-        pred_depth = pred_depths[i]
-        slam_depth = 1/disp
-        
-        if masks is None:
-            msk = None
-        else:
-            msk = masks[t].numpy()
-
-        scale = est_scale_hybrid(slam_depth, pred_depth, msk=msk)
-        scales_.append(scale)
-    scale = np.median(scales_)
     
-    # convert to metric-scale camera extrinsics: R_wc, T_wc
-    pred_cam_t = torch.tensor(traj[:, :3]) * scale
-    pred_cam_q = torch.tensor(traj[:, 3:])
-    pred_cam_r = quaternion_to_matrix(pred_cam_q[:,[3,0,1,2]])
+    try:
+        for t in tqdm(tstamp):
+            img = cv2.imread(imgfiles[t])[:,:,::-1]
+            img = cv2.resize(img, (W, H))
+            
+            img_pil = Image.fromarray(img)
+            pred_depth = model_zoe_n.infer_pil(img_pil)
+            pred_depths.append(pred_depth)
+
+        ##### Estimate Metric Scale #####
+        scales_ = []
+        n = len(tstamp)   # for each keyframe
+        for i in tqdm(range(n)):
+            t = tstamp[i]
+            disp = disps[i]
+            pred_depth = pred_depths[i]
+            slam_depth = 1/disp
+            
+            if masks is None:
+                msk = None
+            else:
+                msk = masks[t].numpy()
+
+            scale = est_scale_hybrid(slam_depth, pred_depth, msk=msk)
+            scales_.append(scale)
+        scale = np.median(scales_)
+        
+        # convert to metric-scale camera extrinsics: R_wc, T_wc
+        pred_cam_t = torch.tensor(traj[:, :3]) * scale
+        pred_cam_q = torch.tensor(traj[:, 3:])
+        pred_cam_r = quaternion_to_matrix(pred_cam_q[:,[3,0,1,2]])
+
+    except Exception as e:
+        print(f"❌ 深度估计或尺度计算失败: {e}")
+        # 返回默认值
+        pred_cam_t = torch.zeros([len(imgfiles), 3])
+        pred_cam_r = torch.eye(3).expand(len(imgfiles), 3, 3)
+    
+    finally:
+        # 无论成功失败都要清理ZoeDepth模型，释放GPU内存
+        print("清理ZoeDepth模型...")
+        try:
+            del model_zoe_n
+            del core
+        except:
+            pass  # 如果对象不存在也没关系
+        torch.cuda.empty_cache()
+        print("✅ 模型清理完成")
 
     return pred_cam_r, pred_cam_t
 

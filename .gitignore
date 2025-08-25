@@ -45,3 +45,19 @@ ipython_config.py
 
 # pyenv
 .python-version
+
+# results
+results/
+
+# pretrained models
+data/pretrain/
+data/smpl/
+
+# logs
+logs/
+
+# cache
+cache/
+
+# third party
+third_party/

@@ -1,0 +1,1 @@
+from .npy_to_bvh_converter import NPYToBVHConverter as npy2bvh
