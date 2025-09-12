@@ -563,7 +563,10 @@ def grounding_sam2_tracking(video_dir: str="./results/example_video/images",
     print(f"Detailed tracks summary (organized by object ID):")
     print(f"  - Total unique objects: {total_objects}")
     print(f"  - Total detections: {total_detections}")
-    print(f"  - Average detections per object: {total_detections / total_objects:.2f}")
+    if total_objects > 0:
+        print(f"  - Average detections per object: {total_detections / total_objects:.2f}")
+    else:
+        print(f"  - Average detections per object: N/A (no objects detected)")
     
     # 打印前5个对象的统计信息
     print(f"\nTop 5 objects by persistence and size:")
@@ -579,7 +582,10 @@ def grounding_sam2_tracking(video_dir: str="./results/example_video/images",
     
     print(f"Masks summary:")
     print(f"  - Total frames with masks: {len(masks_)}")
-    print(f"  - Frame indices range: {min(frame_indices)} - {max(frame_indices)}")
+    if len(frame_indices) > 0:
+        print(f"  - Frame indices range: {min(frame_indices)} - {max(frame_indices)}")
+    else:
+        print(f"  - Frame indices range: N/A (no frames processed)")
     
     # 兼容性：保留原始tracks.npy的检查（但现在使用新的格式）
     print(f"Tracks organized by object ID with {len(tracks)} unique objects.")

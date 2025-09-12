@@ -123,8 +123,10 @@ def main():
         img_folder = args.image_folder
         if args.output_folder is None:
             seq = os.path.basename(args.image_folder)
+            seq_folder = f'results/{seq}'
         else:
-            seq = args.output_folder
+            seq = os.path.basename(args.output_folder) if args.output_folder else 'default'
+            seq_folder = args.output_folder
         video_path = None
         print(f'Using pre-processed images from: {img_folder}')
     else:
@@ -132,12 +134,12 @@ def main():
         video_path = file
         if args.output_folder is None:
             seq = os.path.basename(file).split('.')[0]
+            seq_folder = f'results/{seq}'
         else:
-            seq = args.output_folder
-        img_folder = f'results/{seq}/images'
+            seq = os.path.basename(args.output_folder) if args.output_folder else 'default'
+            seq_folder = args.output_folder
+        img_folder = f'{seq_folder}/images'
         print(f'Processing video: {file}')
-    
-    seq_folder = f'results/{seq}'
     hps_folder = f'{seq_folder}/hps'
     os.makedirs(seq_folder, exist_ok=True)
     os.makedirs(hps_folder, exist_ok=True)
