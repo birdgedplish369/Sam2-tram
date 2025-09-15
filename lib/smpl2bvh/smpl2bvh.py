@@ -1,22 +1,21 @@
+from os import replace
 import torch
 import numpy as np
 import argparse
 import pickle
 import smplx
 
-from utils import bvh, quat
+from lib.smpl2bvh.utils import bvh, quat
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_path", type=str, default="/home/bridge_shd/lish369/Code/tram-main/lib/smpl2bvh/data/smpl/")
+    parser.add_argument("--model_path", type=str, default="/root/tram/data")
     parser.add_argument("--model_type", type=str, default="smpl", choices=["smpl", "smplx"])
     parser.add_argument("--gender", type=str, default="MALE", choices=["MALE", "FEMALE", "NEUTRAL"])
     parser.add_argument("--num_betas", type=int, default=10, choices=[10, 300])
-    parser.add_argument("--poses", type=str, default="/home/bridge_shd/lish369/Code/tram-main/results/walk_01/hps/hps_track_0.npy")
-    parser.add_argument("--camera", type=str, default="/home/bridge_shd/lish369/Code/tram-main/results/walk_01/camera.npy")
+    parser.add_argument("--file_path", type=str, default="/root/tram/results/walk_01")
     parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--output", type=str, default="/home/bridge_shd/lish369/Code/tram-main/results/walk_01/hps/hps_track_0.bvh")
     parser.add_argument("--mirror", action="store_true")
     return parser.parse_args()
 
@@ -66,8 +65,6 @@ def smpl_to_world(pred_rotmat, pred_trans, world_cam_R, world_cam_T):
     # 根平移: t_w = R_wc * t_c + T_wc
     world_trans = (world_cam_R @ pred_trans[..., None]).squeeze(-1) + world_cam_T
     return world_rotmat, world_trans
-
-import numpy as np
 
 # ---- 数学小工具：hat/exp/log on SO(3) ----
 def _hat(v):  # (3,) -> (3,3)
@@ -322,9 +319,13 @@ def smooth_rots_trans(
 
 
 
-def smpl2bvh(model_path:str, poses:str, camera:str, output:str, mirror:bool,
-             model_type="smpl", gender="MALE", 
-             num_betas=10, fps=60) -> None:
+def smpl2bvh(file_path :str, 
+             bvh_output_path :str,
+             model_path = '/root/tram/data', 
+             model_type = 'smpl', 
+             gender = 'MALE', 
+             num_betas = 10, 
+             fps = 30) -> None:
     """Save bvh file created by smpl parameters.
 
     Args:
@@ -365,6 +366,9 @@ def smpl2bvh(model_path:str, poses:str, camera:str, output:str, mirror:bool,
         "Right_palm",
     ]
     # Pose setting.
+    poses = bvh_output_path.replace('.bvh', '.npy')
+    camera = file_path + '/camera.npy'
+    output = bvh_output_path
     if poses.endswith(".npz"):
         poses = np.load(poses)
         
@@ -419,48 +423,54 @@ def smpl2bvh(model_path:str, poses:str, camera:str, output:str, mirror:bool,
     root_offset = rest_pose[0]
     offsets = rest_pose - rest_pose[parents]
     offsets[0] = root_offset
+    # offsets改成cm
+    offsets = offsets * 100.0
+
+    # 脚掌对踝关节的offset更正，由于视频提取动作不是赤脚，加上本来脚掌就有点下倾（6cm），所以需要更正，总体更正到3cm
+    lfoot_id = names.index("Left_foot")
+    rfoot_id = names.index("Right_foot")
+    offsets[lfoot_id][1] = -3.0
+    offsets[rfoot_id][1] = -3.0
+
     scaling = None
     if scaling is not None:
         trans /= scaling
-    
+
+    # 使用新的平滑函数，包含脚掌修正
     rots, trans = smooth_rots_trans(
         rots, trans,
-        mode="ema",          # 或 "gaussian"
-        alpha=0.30,          # 想更稳可降到 0.25
-        sigma_rot=3.0,       # gaussian 时有效
-        sigma_trans=3.0,     # 平移的平滑强度
-        smooth_height=True,  # 这次把高度也平滑
-        floor_lock="template",   # 或 "sequence"
-        offsets=offsets, names=names,
-        floor_quantile=2.0,      # sequence 模式下用第2分位数估地
-        floor_margin=0.0         # 可设 0.01m 留1cm余量
+        mode="ema",
+        alpha=0.30,
+        sigma_rot=3.0,
+        sigma_trans=3.0,
+        smooth_height=True,
+        floor_lock="template",
+        floor_quantile=2.0,
+        floor_margin=0.0
     )
 
-
-
-
-
-    # to quaternion
     # rots = quat.from_axis_angle(rots)
     rots = quat.from_xform(rots) # 从旋转矩阵转换到四元数
     
     order = "zyx"
     pos = offsets[None].repeat(len(rots), axis=0)
     positions = pos.copy()
-    positions[:,0] += trans
+    positions[:,0] += trans * 100.0
+
+
     pelvis_id = names.index("Pelvis")
     lfoot_id  = names.index("Left_foot")
     rfoot_id  = names.index("Right_foot")
 
-    # 模板关节（米）
+    # 模板关节（厘米）
     pelvis_y = rest_pose[pelvis_id, 1]
     foot_y_rel_m = min(rest_pose[lfoot_id, 1], rest_pose[rfoot_id, 1]) - pelvis_y
-
-    lift_m = - foot_y_rel_m    # 米→厘米
-    positions[:, 0, 1] += lift_m         # 根Y整体抬升（cm）
+    foot_y_rel_cm = foot_y_rel_m * 100.0
+    lift_cm = - foot_y_rel_cm    
+    positions[:, 0, 1] += lift_cm    
 
     # 地面校正：调整Y轴位置使人物站在地面上
-    foot_rel_cm = (min(rest_pose[lfoot_id,1], rest_pose[rfoot_id,1]) - rest_pose[pelvis_id,1])
+    foot_rel_cm = (min(rest_pose[lfoot_id,1], rest_pose[rfoot_id,1]) - rest_pose[pelvis_id,1]) * 100.0
     foot_est_cm = positions[:, 0, 1] + foot_rel_cm          # 每帧估计脚高
     floor_cm    = np.percentile(foot_est_cm, 2)              # 稳健一点取低分位
     positions[:, 0, 1] -= floor_cm
@@ -482,36 +492,36 @@ def smpl2bvh(model_path:str, poses:str, camera:str, output:str, mirror:bool,
     
     bvh.save(output, bvh_data)
     
-    if mirror:
-        rots_mirror, trans_mirror = mirror_rot_trans(
-                rots, trans, names, parents)
-        positions_mirror = pos.copy()
-        positions_mirror[:,0] += trans_mirror
-        rotations_mirror = np.degrees(
-            quat.to_euler(rots_mirror, order=order))
+    # if mirror:
+    #     rots_mirror, trans_mirror = mirror_rot_trans(
+    #             rots, trans, names, parents)
+    #     positions_mirror = pos.copy()
+    #     positions_mirror[:,0] += trans_mirror
+    #     rotations_mirror = np.degrees(
+    #         quat.to_euler(rots_mirror, order=order))
         
-        bvh_data ={
-            "rotations": rotations_mirror,
-            "positions": positions_mirror,
-            "offsets": offsets,
-            "parents": parents,
-            "names": names,
-            "order": order,
-            "frametime": 1 / fps,
-        }
+    #     bvh_data ={
+    #         "rotations": rotations_mirror,
+    #         "positions": positions_mirror,
+    #         "offsets": offsets,
+    #         "parents": parents,
+    #         "names": names,
+    #         "order": order,
+    #         "frametime": 1 / fps,
+    #     }
         
-        output_mirror = output.split(".")[0] + "_mirror.bvh"
-        bvh.save(output_mirror, bvh_data)
+    #     output_mirror = output.split(".")[0] + "_mirror.bvh"
+    #     bvh.save(output_mirror, bvh_data)
 
 if __name__ == "__main__":
     args = parse_args()
-    args.poses = '/home/bridge_shd/lish369/Code/tram-main/results/example_video/hps/hps_track_0.npy'
-    args.output = '/home/bridge_shd/lish369/Code/tram-main/results/example_video/hps/hps_track_0.bvh'
-    args.camera = '/home/bridge_shd/lish369/Code/tram-main/results/example_video/camera.npy'
+    # args.poses = '/home/bridge_shd/lish369/Code/tram-main/results/example_video/hps/hps_track_0.npy'
+    # args.output = '/home/bridge_shd/lish369/Code/tram-main/results/example_video/hps/hps_track_0.bvh'
+    # args.camera = '/home/bridge_shd/lish369/Code/tram-main/results/example_video/camera.npy'
     # args.poses = './lib/smpl2bvh-main/0005_Walking001_poses.npz'
     # args.output = './lib/smpl2bvh-main/0005_Walking001_poses.bvh'
-    smpl2bvh(model_path=args.model_path, model_type=args.model_type, 
+    smpl2bvh(file_path=args.file_path, model_path=args.model_path, model_type=args.model_type, 
              mirror = args.mirror, gender=args.gender,
-             poses=args.poses, camera=args.camera, num_betas=args.num_betas, 
-             fps=args.fps, output=args.output)
+             num_betas=args.num_betas, 
+             fps=args.fps)
     print("finished!")

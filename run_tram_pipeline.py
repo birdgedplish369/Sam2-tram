@@ -15,6 +15,7 @@ from lib.pipeline import video2frames, visualize_tram, grounding_sam2_tracking
 from lib.camera import run_metric_slam, calibrate_intrinsics, align_cam_to_world
 from lib.models import get_hmr_vimo
 from lib.vis import npy2bvh
+from lib.smpl2bvh.smpl2bvh import smpl2bvh
 from lib.pipeline_logger import PipelineLogger
 
 def load_tracks_safely(tracks_file):
@@ -400,10 +401,11 @@ def main():
                     try:
                         # 转换为bvh格式并保存
                         # 创建npy2bvh转换器
-                        npy2bvh_convert = npy2bvh(fps=min(video_fps, 30))
-                        bvh_file = npy_file.replace('.npy', '.bvh')
-                        npy2bvh_convert.convert_npy_to_bvh(npy_file, bvh_file)
-                        
+                        # npy2bvh_convert = npy2bvh(fps=min(video_fps, 30))
+                        # bvh_file = npy_file.replace('.npy', '.bvh')
+                        # npy2bvh_convert.convert_npy_to_bvh(npy_file, bvh_file)
+
+                        smpl2bvh(file_path=seq_folder, bvh_output_path=bvh_file, fps=video_fps)
                         # 验证bvh文件是否正确生成
                         if os.path.exists(bvh_file) and os.path.getsize(bvh_file) > 0:
                             bvh_success = True
