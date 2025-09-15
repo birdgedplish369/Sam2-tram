@@ -387,7 +387,11 @@ def smpl2bvh(file_path :str,
         rots_cam = np.array(d["pred_rotmat"])  # (N, 24, 3, 3), 相机坐标系下的旋转矩阵
         trans_cam = np.array(d["pred_trans"].squeeze(1))  # (N, 3), 相机坐标系下的位移
         betas = np.array(d["pred_shape"])  # (N, 10)
-        
+        frames = np.array(d["frame"])  # (N, 1)
+        world_cam_T = world_cam_T[frames]
+        world_cam_R = world_cam_R[frames]
+        # trans_cam = trans_cam[frames]
+        # rots_cam = rots_cam[frames]
         rots, trans = smpl_to_world(rots_cam, trans_cam, world_cam_R, world_cam_T)
 
     elif poses.endswith(".pkl"):
