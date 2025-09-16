@@ -65,11 +65,30 @@ def est_scale_hybrid(slam_depth, pred_depth, sigma=0.5, msk=None,
         msk = cv2.resize(msk, (pred_depth.shape[1], pred_depth.shape[0]))
 
     # Stage 1: Iterative steps
-    s = pred_depth / slam_depth
+    eps = 1e-6
+    s = pred_depth / (slam_depth + eps)
 
     robust = (msk<0.5) * (0<pred_depth) * (pred_depth<10)
-    s_est = s[robust]
-    scale = np.median(s_est)
+    if robust.sum() > 0:
+        s_est = s[robust]
+        scale = np.median(s_est)
+    else:
+        # 如果输入异常图形导致msk全为1，则使用当前方法估计scale
+        # 确保s>0
+        s_index = s < 0
+        s[s_index] = 0
+        # 在 log 域做鲁棒中位数（抗离群）
+        log_s = np.log(s + eps)
+        mu = np.median(log_s)
+        mad = 1.4826 * np.median(np.abs(log_s - mu))  # robust sigma
+        inliers = np.abs(log_s - mu) < 3.0 * mad      # 3*MAD 作为内点
+        scale = float(np.exp(np.median(log_s[inliers])))
+        # 夹持到可信范围，并给出告警
+        LOW, HIGH = 0.2, 5.0
+        if not (LOW <= scale <= HIGH):
+            print(f"[warn] scale {scale:.3g} out of range, clamping.")
+        scale = float(np.clip(scale, LOW, HIGH))
+        return scale
 
     for _ in range(10):
         slam_depth_0 = slam_depth * scale

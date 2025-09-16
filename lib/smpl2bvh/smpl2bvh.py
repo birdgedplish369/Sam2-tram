@@ -324,7 +324,6 @@ def smpl2bvh(file_path :str,
              model_path = '/root/tram/data', 
              model_type = 'smpl', 
              gender = 'MALE', 
-             num_betas = 10, 
              fps = 30) -> None:
     """Save bvh file created by smpl parameters.
 
@@ -519,13 +518,14 @@ def smpl2bvh(file_path :str,
 
 if __name__ == "__main__":
     args = parse_args()
-    # args.poses = '/home/bridge_shd/lish369/Code/tram-main/results/example_video/hps/hps_track_0.npy'
-    # args.output = '/home/bridge_shd/lish369/Code/tram-main/results/example_video/hps/hps_track_0.bvh'
-    # args.camera = '/home/bridge_shd/lish369/Code/tram-main/results/example_video/camera.npy'
-    # args.poses = './lib/smpl2bvh-main/0005_Walking001_poses.npz'
-    # args.output = './lib/smpl2bvh-main/0005_Walking001_poses.bvh'
-    smpl2bvh(file_path=args.file_path, model_path=args.model_path, model_type=args.model_type, 
-             mirror = args.mirror, gender=args.gender,
-             num_betas=args.num_betas, 
+    args.file_path = '/root/tram/results/dance_e'
+    args.bvh_output_path = '/root/tram/results/dance_e/hps/hps_20250915_181102_0.bvh'
+    args.model_path = '/root/tram/lib/smpl2bvh/data/smpl'
+    args.model_type = 'smpl'
+    args.gender = 'MALE'
+    args.fps = 30
+
+    smpl2bvh(file_path=args.file_path, bvh_output_path=args.bvh_output_path, model_path=args.model_path, model_type=args.model_type, 
+             gender=args.gender,
              fps=args.fps)
     print("finished!")
